@@ -117,5 +117,55 @@ export function createConfigStore() {
       .catch((error) => ({ ok: false, error: String((error && error.message) || error) }));
   }
 
-  return { get, getStatus, subscribe, load, refreshStatus, save, runNow, openSession, loadCoreList, saveCoreList };
+  /**
+   * Current keyword-gap suggestions. Kept outside `state`/`status` because it is
+   * advisory data the panel reads on demand, not part of the digest config.
+   */
+  function loadSuggestions() {
+    return fetch(`${BASE}/suggest`)
+      .then((r) => r.json())
+      .then((data) =>
+        data && data.ok
+          ? data
+          : { ok: false, state: { suggestions: [], dismissed: [] }, poolSize: 0 },
+      )
+      .catch((error) => {
+        console.debug('[dsh-paper-digest:store]', error);
+        return { ok: false, state: { suggestions: [], dismissed: [] }, poolSize: 0 };
+      });
+  }
+
+  /** Ask the host to mine the last run's rejected pool. Costs one model call. */
+  function analyseSuggestions() {
+    return fetch(`${BASE}/suggest`, { method: 'POST' })
+      .then((r) => r.json().then((data) => ({ status: r.status, data })))
+      .catch((error) => ({ status: 0, data: { ok: false, error: String((error && error.message) || error) } }));
+  }
+
+  /** Remember a discarded phrase so the next analysis does not propose it again. */
+  function dismissSuggestion(phrase) {
+    return fetch(`${BASE}/suggest`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ dismiss: phrase }),
+    })
+      .then((r) => r.json())
+      .catch((error) => ({ ok: false, error: String((error && error.message) || error) }));
+  }
+
+  return {
+    get,
+    getStatus,
+    subscribe,
+    load,
+    refreshStatus,
+    save,
+    runNow,
+    openSession,
+    loadCoreList,
+    saveCoreList,
+    loadSuggestions,
+    analyseSuggestions,
+    dismissSuggestion,
+  };
 }

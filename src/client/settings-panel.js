@@ -84,6 +84,22 @@ export const PANEL_CSS = `
   .dshpd-chip[aria-pressed='true'] { color: var(--dshpd-accent); border-color: var(--dshpd-accent-2); background: var(--dshpd-accent-1); }
   @media (hover: hover) { .dshpd-chip:hover { border-color: var(--dshpd-text-3); color: var(--dshpd-text); } }
 
+  /* A proposal waiting for a decision: dashed and dimmer than an applied keyword. */
+  .dshpd-chip-suggest {
+    border-style: dashed; color: var(--dshpd-text-2); cursor: pointer;
+  }
+  .dshpd-chip-suggest[aria-pressed='true'] { border-style: solid; }
+  /* An applied keyword: solid, with an explicit remove affordance. */
+  .dshpd-chip-on { color: var(--dshpd-text); border-color: var(--dshpd-text-3); background: transparent; cursor: default; }
+  .dshpd-chip-x {
+    border: 0; background: transparent; color: var(--dshpd-text-3); cursor: pointer;
+    font-size: 13px; line-height: 1; padding: 0 0 0 2px;
+  }
+  @media (hover: hover) { .dshpd-chip-x:hover { color: var(--dshpd-err); } }
+  .dshpd-chip-count { color: var(--dshpd-text-3); font-weight: 500; }
+  .dshpd-kwadd { display: flex; gap: 6px; margin-top: 6px; }
+  .dshpd-kwadd input { flex: 1 1 auto; min-width: 0; }
+
   .dshpd-status { font-size: 11.5px; line-height: 1.6; color: var(--dshpd-text-2); }
   .dshpd-status b { color: var(--dshpd-text); font-weight: 600; }
   .dshpd-status .dshpd-ok { color: var(--dshpd-ok); }
@@ -157,6 +173,14 @@ export function PaperDigestPanel(props) {
   const [coreText, setCoreText] = React.useState('');
   const [coreFile, setCoreFile] = React.useState('');
 
+  // Keyword-gap suggestions: proposals mined from the last run's rejected pool.
+  const [suggestions, setSuggestions] = React.useState([]);
+  const [suggestPoolSize, setSuggestPoolSize] = React.useState(0);
+  const [suggestionTopicId, setSuggestionTopicId] = React.useState('');
+  const [analysing, setAnalysing] = React.useState(false);
+  const [suggestMsg, setSuggestMsg] = React.useState('');
+  const [manualKw, setManualKw] = React.useState({});
+
   React.useEffect(() => {
     return store.subscribe(() => {
       setCfg(store.get() ? { ...store.get() } : null);
@@ -166,6 +190,12 @@ export function PaperDigestPanel(props) {
 
   React.useEffect(() => {
     store.load();
+    // Suggestions are advisory and survive page reloads; fetch once on mount.
+    store.loadSuggestions().then((data) => {
+      setSuggestions((data?.state?.suggestions) ?? []);
+      setSuggestPoolSize(data?.poolSize ?? 0);
+      setSuggestionTopicId((data?.state?.topicId) ?? '');
+    });
   }, [store]);
 
   // Never leave a poll running after the panel goes away.
@@ -301,6 +331,159 @@ export function PaperDigestPanel(props) {
       startStatusPoll();
     });
   }
+
+  /**
+   * Split a topic's keyword string into chip-sized entries.
+   *
+   * The separator is `;` only — inside an entry a comma lists synonyms and a
+   * space means OR (Chinese) or AND (English), so a comma must never split here.
+   */
+  function kwEntries(text) {
+    return String(text ?? '')
+      .split(/[;；\n]+/)
+      .map((s) => s.trim())
+      .filter(Boolean);
+  }
+
+  function setKeywords(topicIndex, field, entries) {
+    setTopic(topicIndex, field, entries.join('; '));
+  }
+
+  function addKeyword(topicIndex, field) {
+    const key = `${topicIndex}:${field}`;
+    const value = String(manualKw[key] ?? '').trim();
+    if (!value) return;
+    const topic = cfg.topics[topicIndex];
+    const entries = kwEntries(topic[field]);
+    // A multi-group paste is allowed:分号 is the entry separator, so split it too.
+    const added = value.split(/[;；]+/).map((s) => s.trim()).filter(Boolean);
+    const next = [...entries];
+    for (const item of added) if (!next.includes(item)) next.push(item);
+    setKeywords(topicIndex, field, next);
+    setManualKw((prev) => ({ ...prev, [key]: '' }));
+  }
+
+  function removeKeyword(topicIndex, field, entry) {
+    const entries = kwEntries(cfg.topics[topicIndex][field]).filter((e) => e !== entry);
+    setKeywords(topicIndex, field, entries);
+  }
+
+  /**
+   * Adopt a proposal: append it to the matching topic's keyword string. An
+   * accepted chip becomes a normal keyword, editable and removable like any
+   * other — the suggestion store is not a second source of truth.
+   */
+  function adoptSuggestion(suggestion) {
+    const index = cfg.topics.findIndex((t) => t.id === suggestionTopicId);
+    const topicIndex = index >= 0 ? index : 0;
+    const topic = cfg.topics[topicIndex];
+    if (!topic) return;
+    const field = suggestion.lang === 'en' ? 'en' : 'zh';
+    const entries = kwEntries(topic[field]);
+    if (!entries.includes(suggestion.phrase)) entries.push(suggestion.phrase);
+    setKeywords(topicIndex, field, entries);
+    setSuggestions((prev) => prev.filter((s) => s.phrase !== suggestion.phrase));
+    setSuggestMsg(`已加入「${topic.name}」的${field === 'en' ? '英文' : '中文'}关键词`);
+  }
+
+  function dismissSuggestion(phrase) {
+    setSuggestions((prev) => prev.filter((s) => s.phrase !== phrase));
+    store.dismissSuggestion(phrase).then((res) => {
+      if (res && res.ok === false) setSuggestMsg(`丢弃记录保存失败：${res.error || '未知错误'}`);
+    });
+  }
+
+  function analyseGap() {
+    setAnalysing(true);
+    setSuggestMsg('正在用模型分析被过滤掉的候选…');
+    store.analyseSuggestions().then((res) => {
+      setAnalysing(false);
+      const data = res?.data ?? {};
+      if (!data.ok) {
+        setSuggestMsg(data.error || '分析失败');
+        if (data.poolSize !== undefined) setSuggestPoolSize(data.poolSize);
+        return;
+      }
+      setSuggestions(data.state?.suggestions ?? []);
+      setSuggestPoolSize(data.poolSize ?? 0);
+      setSuggestionTopicId(data.topic?.id ?? '');
+      const n = (data.state?.suggestions ?? []).length;
+      setSuggestMsg(
+        n === 0
+          ? `分析完成：从 ${data.nearMissCount ?? 0} 条接近判据的论文里没找到符合要求的表述（这本身是个结论）`
+          : `分析完成：${n} 条建议，来自 ${data.nearMissCount ?? 0} 条接近判据的论文`,
+      );
+    });
+  }
+
+  /** Applied keywords as removable chips, plus a free-form add box. */
+  const keywordEditor = (topic, index, field, label, placeholder) => {
+    const entries = kwEntries(topic[field]);
+    const key = `${index}:${field}`;
+    return React.createElement(
+      'div',
+      null,
+      React.createElement(
+        'div',
+        { className: 'dshpd-kwlabel' },
+        `${label}（${entries.length}）· 空格=或，逗号=同义词，分号=分组`,
+      ),
+      entries.length
+        ? React.createElement(
+            'div',
+            { className: 'dshpd-chips' },
+            entries.map((entry) =>
+              React.createElement(
+                'span',
+                { className: 'dshpd-chip dshpd-chip-on', key: entry },
+                entry,
+                React.createElement(
+                  'button',
+                  {
+                    type: 'button',
+                    className: 'dshpd-chip-x',
+                    title: '删除这个关键词',
+                    'aria-label': `删除关键词 ${entry}`,
+                    onClick: () => removeKeyword(index, field, entry),
+                  },
+                  '×',
+                ),
+              ),
+            ),
+          )
+        : React.createElement('div', { className: 'dshpd-status' }, '（还没有关键词，下面直接输入即可）'),
+      React.createElement(
+        'div',
+        { className: 'dshpd-kwadd' },
+        React.createElement('input', {
+          type: 'text',
+          className: 'dshpd-field',
+          value: manualKw[key] ?? '',
+          placeholder,
+          'aria-label': `添加${label}`,
+          onChange: (e) => setManualKw((prev) => ({ ...prev, [key]: e.target.value })),
+          onKeyDown: (e) => {
+            if (e.key === 'Enter') {
+              e.preventDefault();
+              addKeyword(index, field);
+            }
+          },
+        }),
+        React.createElement(
+          'button',
+          { type: 'button', className: 'dshpd-btn dshpd-btn-sm', onClick: () => addKeyword(index, field) },
+          '添加',
+        ),
+      ),
+      React.createElement('textarea', {
+        className: 'dshpd-field',
+        value: topic[field],
+        placeholder,
+        'aria-label': `${label}（文本编辑）`,
+        onChange: (e) => setTopic(index, field, e.target.value),
+      }),
+    );
+  };
 
   const last = status && status.lastRun ? status.lastRun : null;
 
@@ -534,22 +717,14 @@ export function PaperDigestPanel(props) {
                 '删除',
               ),
             ),
-            React.createElement('div', { className: 'dshpd-kwlabel' }, '中文关键词'),
-            React.createElement('textarea', {
-              className: 'dshpd-field',
-              value: topic.zh,
-              placeholder: '例：人工智能 教育; 大模型 教学',
-              'aria-label': '中文关键词',
-              onChange: (e) => setTopic(index, 'zh', e.target.value),
-            }),
-            React.createElement('div', { className: 'dshpd-kwlabel' }, '英文关键词'),
-            React.createElement('textarea', {
-              className: 'dshpd-field',
-              value: topic.en,
-              placeholder: 'e.g. artificial intelligence education; large language model teaching',
-              'aria-label': '英文关键词',
-              onChange: (e) => setTopic(index, 'en', e.target.value),
-            }),
+            keywordEditor(topic, index, 'zh', '中文关键词', '例：人工智能 教育; 大模型 教学'),
+            keywordEditor(
+              topic,
+              index,
+              'en',
+              '英文关键词',
+              'e.g. artificial intelligence education; large language model teaching',
+            ),
           ),
         ),
         React.createElement(
@@ -560,6 +735,98 @@ export function PaperDigestPanel(props) {
             { type: 'button', className: 'dshpd-btn dshpd-btn-ghost dshpd-btn-sm', onClick: addTopic },
             '＋ 添加主题',
           ),
+        ),
+      ),
+    ),
+
+    // ---- keyword gap: what did the gate throw away? ----
+    React.createElement(
+      'div',
+      { className: 'dshpd-group' },
+      React.createElement('div', { className: 'dshpd-group-label' }, '关键词缺口（AI 分析漏检）'),
+      React.createElement(
+        'div',
+        { className: 'dshpd-card' },
+        React.createElement(
+          'div',
+          { className: 'dshpd-col' },
+          React.createElement(
+            'div',
+            { className: 'dshpd-status' },
+            suggestPoolSize > 0
+              ? `上次运行中被判为不相关而丢弃 ${suggestPoolSize} 条，其中"接近判据"的会送进分析。`
+              : '还没有可分析的候选：先运行一次日报，被过滤掉的论文才会进入分析池。',
+          ),
+          React.createElement(
+            'div',
+            { className: 'dshpd-rowfields' },
+            React.createElement(
+              'button',
+              {
+                type: 'button',
+                className: 'dshpd-btn dshpd-btn-primary',
+                disabled: analysing || suggestPoolSize === 0,
+                onClick: analyseGap,
+              },
+              analysing ? '分析中…' : '分析漏检，给我候选关键词',
+            ),
+            React.createElement(
+              'span',
+              { className: 'dshpd-status' },
+              suggestMsg || '模型只从被丢弃的论文原文里摘取表述，不会凭空生成概念。',
+            ),
+          ),
+          suggestions.length
+            ? React.createElement(
+                'div',
+                { className: 'dshpd-col' },
+                React.createElement(
+                  'div',
+                  { className: 'dshpd-kwlabel' },
+                  `${suggestions.length} 条建议（点击采纳；× 丢弃后不再重复出现）`,
+                ),
+                React.createElement(
+                  'div',
+                  { className: 'dshpd-chips' },
+                  suggestions.map((s) =>
+                    React.createElement(
+                      'span',
+                      {
+                        className: 'dshpd-chip dshpd-chip-suggest',
+                        key: s.phrase,
+                        title: `${s.reason || '模型未给出理由'}\n预计可多召回 ${s.coverage} 篇`,
+                        onClick: () => adoptSuggestion(s),
+                        onKeyDown: (e) => {
+                          if (e.key === 'Enter' || e.key === ' ') {
+                            e.preventDefault();
+                            adoptSuggestion(s);
+                          }
+                        },
+                        role: 'button',
+                        tabIndex: 0,
+                        'aria-pressed': false,
+                      },
+                      s.phrase,
+                      React.createElement('span', { className: 'dshpd-chip-count' }, ` +${s.coverage}`),
+                      React.createElement(
+                        'button',
+                        {
+                          type: 'button',
+                          className: 'dshpd-chip-x',
+                          title: '丢弃这条建议',
+                          'aria-label': `丢弃建议 ${s.phrase}`,
+                          onClick: (e) => {
+                            e.stopPropagation();
+                            dismissSuggestion(s.phrase);
+                          },
+                        },
+                        '×',
+                      ),
+                    ),
+                  ),
+                ),
+              )
+            : null,
         ),
       ),
     ),
