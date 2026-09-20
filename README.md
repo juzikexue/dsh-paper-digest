@@ -2,6 +2,13 @@
 
 每日论文日报插件。按设定的时间自动检索中英文高质量论文，按透明可审计的质量信号排序，生成一份按主题分组的 Markdown 日报写入工作区。全部配置在 DSH **设置 → 论文日报** 中完成。
 
+> **v0.1.1 修复**（功能范围未变，只修交互缺陷与构建配置）：
+>
+> 1. **启动期静默锁**：调度器在插件加载后 8 秒就会补跑当天日报并独占运行锁数分钟，而设置页完全看不到这次运行，于是首次点击「立即生成日报」会撞上 `已有一次运行在进行中`。现在运行状态携带**触发来源与已用时**，`POST /run` 在已有运行时不再返回 409，而是如实说明"已在进行中"并让前端跟踪那一次运行。
+> 2. **按钮忙态不自同步**：面板原本只在挂载时读一次状态，且轮询被 `status.running` 门控，所以宿主侧发起的运行对面板不可见。现在面板会主动发现并跟踪进行中的运行，按钮与进度文案随之更新。
+> 3. **包名改为单一事实来源**：`scripts/build-client.mjs` 不再硬编码模块 id，改为读 `package.json` 的 `name`。原先两处硬编码会静默漂移——宿主按清单名提供 bundle、而 banner 注册了另一个 id，结果是设置页永不出现且无任何日志。
+> 4. **构建授权对准 pnpm 12**：`package.json` 里的 `pnpm.onlyBuiltDependencies` 已不被 pnpm 12 读取，导致新克隆 `pnpm install` 以 `ERR_PNPM_IGNORED_BUILDS` 失败。改为 `pnpm-workspace.yaml` 里的 `allowBuilds`。
+
 ## 它解决什么
 
 "每天自动送 10 篇好论文"的真正难点不是推送，而是**判定质量**与**拿到中文文献**：
@@ -86,12 +93,12 @@ pnpm test           # 可选：69 项回归单测
 {
   "dsh": {
     "profile": {
-      "bundles": [ /* … */ "@dsh-local/dsh-paper-digest" ]
+      "bundles": [ /* … */ "@juzikexue/dsh-paper-digest" ]
     }
   },
   "dependencies": {
-    // 换成上一步克隆到的绝对路径
-    "@dsh-local/dsh-paper-digest": "link:/abs/path/to/dsh-paper-digest"
+    // 键名与值都必须用 package.json 里的 name，换成上一步克隆到的绝对路径
+    "@juzikexue/dsh-paper-digest": "link:/abs/path/to/dsh-paper-digest"
   }
 }
 ```
@@ -100,6 +107,12 @@ pnpm test           # 可选：69 项回归单测
 cd ~/.dsh/profiles/web && pnpm install
 # 然后重启 dsh web
 ```
+
+> 也可以直接用 CLI，它会自动把带 `dsh.bundle` 声明的依赖并入 `dsh.profile.bundles`：
+>
+> ```sh
+> dsh plugin --profile web add "link:/abs/path/to/dsh-paper-digest"
+> ```
 
 插件的 `cordis.patch.yml` 只在 Loader 树里插一行 host row：该行负责配置/状态路由、每日调度与产出；浏览器半由 `package.json` 的 `dsh.client` 声明被 `dsh-client-modules` 发现。
 

@@ -5,16 +5,25 @@
  * copy breaks hooks at runtime. Output mirrors what dsh-client-modules expects:
  * a single window.__ModuleLoader__.load({ id, factory }) handoff whose factory
  * returns the module exports (apply / inject).
+ *
+ * The module id is read from package.json rather than repeated here: the id IS
+ * the package name, two copies of it drift, and the failure is silent — the host
+ * serves the bundle under the manifest name while the banner registers another,
+ * so the settings page never appears and nothing is logged.
  */
 import { build } from 'esbuild';
-import { writeFileSync } from 'node:fs';
+import { readFileSync, writeFileSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const entry = resolve(root, 'src/client/index.js');
 const outfile = resolve(root, 'lib/client.js');
-const id = '@dsh-local/dsh-paper-digest';
+const manifest = JSON.parse(readFileSync(resolve(root, 'package.json'), 'utf8'));
+const id = manifest.name;
+if (typeof id !== 'string' || id === '') {
+  throw new Error('package.json has no "name" — the client bundle id has nothing to read');
+}
 const watch = process.argv.includes('--watch');
 
 const banner =

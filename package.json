@@ -1,7 +1,7 @@
 {
-  "name": "@dsh-local/dsh-paper-digest",
+  "name": "@juzikexue/dsh-paper-digest",
   "description": "Paper digest plugin: every day at a configured time, collect quality papers on your topics (Chinese + English), rank them with transparent quality signals, and write a Markdown report into the workspace. Configured from its own page in DSH Settings.",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "type": "module",
   "main": "lib/index.js",
   "exports": {
@@ -44,15 +44,11 @@
   "scripts": {
     "build:client": "node scripts/build-client.mjs",
     "watch:client": "node scripts/build-client.mjs --watch",
-    "test": "node --test \"test/*.test.js\""
+    "test": "node --test \"test/*.test.js\"",
+    "prepack": "node scripts/build-client.mjs"
   },
   "devDependencies": {
     "esbuild": "^0.28.2"
-  },
-  "pnpm": {
-    "onlyBuiltDependencies": [
-      "esbuild"
-    ]
   },
   "dsh": {
     "bundle": {

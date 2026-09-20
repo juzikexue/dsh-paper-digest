@@ -1,0 +1,14 @@
+# pnpm 12 build approvals.
+#
+# The plugin used to declare `pnpm.onlyBuiltDependencies` in package.json. pnpm 12
+# no longer reads that field at all — it warns "The pnpm field in package.json is no
+# longer read" and then blocks the script, so `pnpm install` in a fresh clone ended
+# in ERR_PNPM_IGNORED_BUILDS and never ran esbuild's postinstall.
+#
+# The current home of the setting is this file, and the current key name is
+# `allowBuilds` (one boolean per package). esbuild's postinstall only verifies the
+# platform binary, which also ships inside the @esbuild/<platform> optional
+# dependency, so the build is not strictly required — approving it keeps install
+# clean and is exactly what `pnpm approve-builds` writes here.
+allowBuilds:
+  esbuild: true

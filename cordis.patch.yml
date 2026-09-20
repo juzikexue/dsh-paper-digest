@@ -1,4 +1,4 @@
-# @dsh-local/dsh-paper-digest bundle patch.
+# @juzikexue/dsh-paper-digest bundle patch.
 # One host row puts the package in the Loader tree: it serves the plugin's own
 # config/status routes, runs the daily scheduler, and (via the `dsh.client`
 # declaration in package.json) makes the browser half discoverable so the
@@ -8,4 +8,4 @@
 # persisted under <DSH_HOME>/storages/dsh-paper-digest/config.json.
 - insert:
     - id: dsh-paper-digest
-      name: '@dsh-local/dsh-paper-digest'
+      name: '@juzikexue/dsh-paper-digest'

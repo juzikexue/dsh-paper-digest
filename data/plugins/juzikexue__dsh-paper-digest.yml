@@ -1,0 +1,16 @@
+url: https://github.com/juzikexue/dsh-paper-digest
+name: juzikexue/dsh-paper-digest
+category: docs
+description:
+  en: >-
+    Daily literature digest for DSH: collects Chinese and English papers from CNKI
+    journal RSS, ChinaXiv, OpenAlex, Crossref, arXiv and Europe PMC, ranks them
+    with auditable quality signals (venue, content evidence, recency, open data,
+    community attention, author affiliation), downloads open-access full texts
+    only, and writes a topic-grouped Markdown report into the workspace while
+    opening a session for it. Configured entirely from Settings → 论文日报.
+  zh: >-
+    每日论文日报：从 CNKI 期刊 RSS、ChinaXiv、OpenAlex、Crossref、arXiv 与
+    Europe PMC 收集中英文论文，按可审计的质量信号（场所权威、内容证据、时效、数据
+    公开、社区关注、作者机构）排序，只下载开放获取全文，生成按主题分组的 Markdown
+    日报写入工作区并为它开一个会话。全部配置在 设置 → 论文日报 中完成。

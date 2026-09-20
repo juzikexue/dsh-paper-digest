@@ -139,6 +139,14 @@ function newTopicId(topics) {
   return `t${i}`;
 }
 
+/** "12 秒" / "1 分 05 秒" — elapsed time reads better than a start timestamp. */
+function formatElapsed(ms) {
+  const total = Math.max(0, Math.floor((Number(ms) || 0) / 1000));
+  const minutes = Math.floor(total / 60);
+  const seconds = total % 60;
+  return minutes > 0 ? `${minutes} 分 ${String(seconds).padStart(2, '0')} 秒` : `${seconds} 秒`;
+}
+
 export function PaperDigestPanel(props) {
   const store = props.store;
   const [cfg, setCfg] = React.useState(() => store.get() || null);
@@ -160,11 +168,61 @@ export function PaperDigestPanel(props) {
     store.load();
   }, [store]);
 
-  // While a run is in flight, poll status so the panel reports the outcome.
+  // Never leave a poll running after the panel goes away.
+  React.useEffect(
+    () => () => {
+      if (runPollRef.current) clearInterval(runPollRef.current);
+    },
+    [],
+  );
+
+  // Which run this panel is tracking, and how it started. Shared by the button
+  // (which starts one) and by the mount-time discovery below (which finds one
+  // already in flight) — that sharing is the point: previously only a click
+  // started polling, so the scheduler's boot catch-up stayed invisible.
+  const runPollRef = React.useRef(null);
+
+  // Poll until the host reports the run finished, then report the outcome. One
+  // code path for both ways a run becomes visible: a click here, or a run the
+  // host had already started.
+  function startStatusPoll() {
+    if (runPollRef.current) return;
+    let ticks = 0;
+    runPollRef.current = setInterval(() => {
+      ticks += 1;
+      store.refreshStatus().then((s) => {
+        if (!((s && !s.running) || ticks > 120)) return;
+        clearInterval(runPollRef.current);
+        runPollRef.current = null;
+        setBusy(false);
+        if (s && s.lastRun) {
+          setMessage(
+            s.lastRun.ok
+              ? `完成：${s.lastRun.totals.selected} 篇，已写入 ${s.lastRun.file}`
+              : '完成但未选出论文，请查看下方诊断',
+          );
+        } else {
+          setMessage('运行结束');
+        }
+      });
+    }, 2500);
+  }
+
+  // A daily run is triggered host-side (the scheduler's boot catch-up fires 8s
+  // after the plugin loads and can hold its lock for minutes). Nothing told the
+  // panel, so the button looked idle and the first click came back as a refusal.
+  // Adopt any in-flight run instead, and show which one it is.
   React.useEffect(() => {
-    if (!status || !status.running) return undefined;
-    const t = setInterval(() => store.refreshStatus(), 2500);
-    return () => clearInterval(t);
+    if (!status || !status.running) return;
+    setBusy(true);
+    if (runPollRef.current) return;
+    const run = status.currentRun;
+    setMessage(
+      run
+        ? `已有一次${run.trigger === 'schedule' ? '定时补跑' : ''}运行在进行中，正在跟踪…`
+        : '已有一次运行在进行中，正在跟踪…',
+    );
+    startStatusPoll();
   }, [store, status && status.running]);
 
   if (!cfg) {
@@ -233,27 +291,14 @@ export function PaperDigestPanel(props) {
         setMessage(`启动失败：${(res.data && res.data.error) || '未知错误'}`);
         return;
       }
-      setMessage('运行中，完成后会写入工作区（可离开本页）');
-      // Poll until the host reports the run finished.
-      let ticks = 0;
-      const timer = setInterval(() => {
-        ticks += 1;
-        store.refreshStatus().then((s) => {
-          if ((s && !s.running) || ticks > 120) {
-            clearInterval(timer);
-            setBusy(false);
-            if (s && s.lastRun) {
-              setMessage(
-                s.lastRun.ok
-                  ? `完成：${s.lastRun.totals.selected} 篇，已写入 ${s.lastRun.file}`
-                  : `完成但未选出论文，请查看下方诊断`,
-              );
-            } else {
-              setMessage('运行结束');
-            }
-          }
-        });
-      }, 2500);
+      // The host reports which run the click joined. It is never a new one when
+      // a daily run is already in flight, and saying so beats pretending.
+      setMessage(
+        res.data.alreadyRunning
+          ? res.data.message || '已有一次运行在进行中，正在跟踪这一次运行'
+          : '运行中，完成后会写入工作区（可离开本页）',
+      );
+      startStatusPoll();
     });
   }
 
@@ -399,7 +444,11 @@ export function PaperDigestPanel(props) {
                 disabled: busy,
                 onClick: runNow,
               },
-              busy ? '运行中…' : '立即生成日报',
+              busy
+                ? status && status.currentRun && status.currentRun.trigger === 'schedule'
+                  ? '定时补跑进行中…'
+                  : '运行中…'
+                : '立即生成日报',
             ),
             React.createElement(
               'span',
@@ -411,6 +460,17 @@ export function PaperDigestPanel(props) {
                   : '尚未运行过',
             ),
           ),
+          // While a run is in flight, show what it is, since when, and that it is
+          // still moving — a silent multi-minute lock is what made this look hung.
+          status && status.running
+            ? React.createElement(
+                'div',
+                { className: 'dshpd-status', style: { marginTop: 8 } },
+                `${
+                  status.currentRun && status.currentRun.trigger === 'schedule' ? '定时补跑' : '本次运行'
+                }已用时 ${formatElapsed(status.currentRun ? status.currentRun.elapsedMs : 0)}`,
+              )
+            : null,
           last && last.file
             ? React.createElement(
                 'div',
