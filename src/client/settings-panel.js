@@ -455,20 +455,25 @@ export function PaperDigestPanel(props) {
     });
   }
 
-  /** Adopt one proposed group: write both halves into the topic's keywords. */
+  /**
+   * Adopt one proposal by **appending it as a single entry**.
+   *
+   * The proposal is already a complete expression — `a, b + c, d` means
+   * "(a or b) and (c or d)". Splitting it on the separators and re-joining would
+   * rebuild it as `;`-separated alternatives, which silently turns the AND back
+   * into an OR and is exactly the mistake this syntax exists to prevent.
+   */
   function adoptKeywordGroup(index, group) {
     const topic = cfg.topics[index];
     if (!topic) return;
-    const zhEntries = kwEntries(topic.zh);
-    const enEntries = kwEntries(topic.en);
-    for (const part of String(group.zh).split(/[;；]+/).map((s) => s.trim()).filter(Boolean)) {
-      if (!zhEntries.includes(part)) zhEntries.push(part);
-    }
-    for (const part of String(group.en).split(/[;；]+/).map((s) => s.trim()).filter(Boolean)) {
-      if (!enEntries.includes(part)) enEntries.push(part);
-    }
+    const append = (current, value) => {
+      const parts = kwEntries(current);
+      const entry = String(value ?? '').trim();
+      if (entry && !parts.includes(entry)) parts.push(entry);
+      return parts.join('; ');
+    };
     const topics = cfg.topics.map((t, i) =>
-      i === index ? { ...t, zh: zhEntries.join('; '), en: enEntries.join('; ') } : t,
+      i === index ? { ...t, zh: append(t.zh, group.zh), en: append(t.en, group.en) } : t,
     );
     patch({ topics });
     setKwProposals((prev) => ({
@@ -487,7 +492,7 @@ export function PaperDigestPanel(props) {
       React.createElement(
         'div',
         { className: 'dshpd-kwlabel' },
-        `${label}（${entries.length}）· 空格=或，逗号=同义词，分号=分组`,
+        `${label}（${entries.length}）· + 号=同时满足，分号=任一即可，逗号=同义词，空格=或`,
       ),
       entries.length
         ? React.createElement(
@@ -748,7 +753,7 @@ export function PaperDigestPanel(props) {
       React.createElement(
         'div',
         { className: 'dshpd-group-label' },
-        `研究主题（${cfg.topics.length}）· 关键词用分号分隔，同组内可用逗号列同义词`,
+        `研究主题（${cfg.topics.length}）· 分号=任一即可，+ 号=同时满足，逗号=同义词`,
       ),
       React.createElement(
         'div',

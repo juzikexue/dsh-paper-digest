@@ -18,8 +18,9 @@ import {
   buildKeywordPrompt,
   parseKeywordGroups,
   coverageVerdict,
-  MAX_KEYWORD_GROUPS,
 } from '../lib/core/suggest.js';
+import { splitConcepts, splitKeywords, topicTerms } from '../lib/core/config.js';
+import { matchesTopic } from '../lib/core/text.js';
 
 const topic = { id: 't1', name: '人工智能教育', zh: '人工智能 教育', en: 'artificial intelligence education' };
 
@@ -186,55 +187,66 @@ test('mergeSuggestions drops dismissed phrases and keeps the list', () => {
 
 /* ── keywords generated from a topic name ─────────────────────────────────── */
 
-test('a generated group must be specific in both languages', () => {
-  // The failure mode is a group that looks fine in one language and is a bare
-  // generic word in the other, which is exactly what floods a digest.
+test('requirements become one AND string with OR-ed phrasings inside', () => {
+  // The model returns AND-ed requirements; the field's syntax is `+` between
+  // requirements and `,` between synonyms, so the two have to line up.
   const reply = JSON.stringify({
-    groups: [
-      { zh: '人工智能 教育', en: 'artificial intelligence education' }, // keep
-      { zh: '教育', en: 'artificial intelligence education' }, // zh too generic
-      { zh: '人工智能 教育', en: 'education' }, // en too generic
-      { zh: '学习分析', en: 'learning analytics' }, // keep
+    requirements: [
+      { zh: ['人工智能', '大模型'], en: ['artificial intelligence', 'large language model'] },
+      { zh: ['语文教育', '阅读教学'], en: ['chinese language education', 'reading instruction'] },
     ],
   });
   const out = parseKeywordGroups(reply);
-  assert.equal(out.length, 2);
-  assert.equal(out[0].zh, '人工智能 教育');
-  assert.equal(out[1].en, 'learning analytics');
+  assert.equal(out.length, 1, 'one keyword string covering every requirement');
+  assert.equal(out[0].zh, '人工智能, 大模型 + 语文教育, 阅读教学');
+  assert.equal(
+    out[0].en,
+    'artificial intelligence, large language model + chinese language education, reading instruction',
+  );
+  assert.equal(out[0].requirementCount, 2);
 });
 
-test('a group missing one half is dropped, never half-applied', () => {
+test('an unspecific phrasing is dropped, and an empty requirement with it', () => {
   const reply = JSON.stringify({
-    groups: [
-      { zh: '人工智能 教育', en: '' },
-      { zh: '', en: 'artificial intelligence education' },
-      { zh: '学习分析', en: 'learning analytics' },
+    requirements: [
+      { zh: ['教育'], en: ['education'] },
+      { zh: ['学习分析', '教育'], en: ['learning analytics'] },
     ],
   });
   const out = parseKeywordGroups(reply);
-  assert.equal(out.length, 1, 'a half-filled group is not a keyword');
-  assert.equal(out[0].zh, '学习分析');
+  assert.equal(out.length, 1);
+  assert.equal(out[0].zh, '学习分析', 'the generic 教育 is dropped, not passed through');
+  assert.equal(out[0].requirementCount, 1);
 });
 
-test('duplicate groups collapse and the list is capped', () => {
-  const many = Array.from({ length: 20 }, () => ({ zh: '学习分析 方法', en: 'learning analytics methods' }));
-  const out = parseKeywordGroups(JSON.stringify({ groups: [...many, { zh: '学习分析', en: 'learning analytics' }] }));
-  assert.equal(out.length, 2, 'identical pairs collapse');
-  assert.ok(out.length <= MAX_KEYWORD_GROUPS);
-});
-
-test('a malformed keyword reply yields nothing instead of throwing', () => {
-  for (const bad of ['', 'nope', '{"groups": 3}', '{"other":[]}', '```json\nnot json\n```']) {
+test('a reply with no usable requirement yields nothing', () => {
+  for (const bad of [
+    '',
+    'nope',
+    '{"requirements": 3}',
+    '{"requirements":[{"zh":["教育"],"en":["education"]}]}',
+    '{"other":[]}',
+  ]) {
     assert.deepEqual(parseKeywordGroups(bad), []);
   }
 });
 
-test('the keyword prompt demands specificity and a translation pair', () => {
+test('the older flat groups shape is still accepted', () => {
+  const reply = JSON.stringify({ groups: [{ zh: '学习分析', en: 'learning analytics' }] });
+  const out = parseKeywordGroups(reply);
+  assert.equal(out.length, 1);
+  assert.equal(out[0].zh, '学习分析');
+  assert.equal(out[0].en, 'learning analytics');
+});
+
+test('the keyword prompt asks for AND-ed requirements, not a flat list', () => {
   const prompt = buildKeywordPrompt({ name: '教育数据挖掘' });
   assert.ok(prompt.includes('教育数据挖掘'), 'carries the topic name');
-  assert.ok(prompt.includes('至少 4 个字'), 'states the Chinese floor');
+  assert.ok(prompt.includes('必须同时满足'), 'states that requirements are ANDed');
+  assert.ok(prompt.includes('任意一个即可'), 'states that phrasings are ORed');
+  assert.ok(prompt.includes('至少 3 个字'), 'states the Chinese floor');
   assert.ok(prompt.includes('至少两个词'), 'states the English floor');
-  assert.ok(prompt.includes('同一检索意图'), 'demands a translation pair, not two lists');
+  assert.ok(prompt.includes('通常 1 到 3 个'), 'warns against inventing many requirements');
 });
 
 test('coverage verdicts distinguish "no results" from "could not check"', () => {
@@ -243,4 +255,65 @@ test('coverage verdicts distinguish "no results" from "could not check"', () => 
   assert.equal(coverageVerdict(undefined), '未能核验');
   assert.match(coverageVerdict(12610), /12610/);
   assert.match(coverageVerdict(9_000_000), /过宽/);
+});
+
+/* ── separator semantics the field has to express ─────────────────────────── */
+
+test('separators: `;` and newline are alternatives, `+` is a requirement', () => {
+  // Both readings are legitimate intents that look identical when written as
+  // separate lines, so the field has to distinguish them.
+  assert.deepEqual(splitConcepts('机器学习; 深度学习'), [['机器学习', '深度学习']]);
+  assert.deepEqual(splitConcepts('机器学习\n深度学习'), [['机器学习', '深度学习']]);
+  assert.deepEqual(splitConcepts('人工智能, AI + 语文教育, 阅读教学'), [
+    ['人工智能', 'AI'],
+    ['语文教育', '阅读教学'],
+  ]);
+  // Two `+` requirements, each with its own alternatives.
+  assert.deepEqual(splitConcepts('a one; a two + b one; b two'), [
+    ['a one', 'a two'],
+    ['b one', 'b two'],
+  ]);
+});
+
+test('a space inside a Chinese probe survives parsing', () => {
+  // 人工智能 教育 means "AI or education" at the keyword level and must not be
+  // split into two probes by the concept parser.
+  assert.deepEqual(splitConcepts('人工智能 教育; 大模型 教学'), [['人工智能 教育', '大模型 教学']]);
+  assert.deepEqual(splitKeywords('人工智能 教育; 大模型 教学'), ['人工智能 教育', '大模型 教学']);
+});
+
+test('concepts are ANDed: a paper must satisfy every `+` requirement', () => {
+  const topic = {
+    id: 't',
+    name: 'AI 语文教学',
+    zh: '人工智能, AI + 语文教育, 阅读教学',
+    en: '',
+    terms: topicTerms({ zh: '人工智能, AI + 语文教育, 阅读教学', en: '' }),
+    concepts: splitConcepts('人工智能, AI + 语文教育, 阅读教学'),
+  };
+  const both = { title: '人工智能辅助语文教育写作教学研究', abstract: '', keywords: [] };
+  const onlyAi = { title: '人工智能产品适应性创新演化博弈研究', abstract: '', keywords: [] };
+  const onlyChinese = { title: '语文教育中的阅读教学策略研究', abstract: '', keywords: [] };
+  assert.equal(topic.concepts.length, 2, 'two requirements');
+  assert.ok(matchesTopic(both, topic), 'both requirements met → accepted');
+  assert.equal(matchesTopic(onlyAi, topic), null, 'one requirement missing → rejected');
+  assert.equal(matchesTopic(onlyChinese, topic), null, 'the other requirement missing → rejected');
+});
+
+test('a single requirement keeps the old OR reach (no regression)', () => {
+  // `;` still means alternatives, so a user listing many phrasings of one idea
+  // does not accidentally require all of them. This is the shape measured on the
+  // real 「强化学习」 topic, where AND-requiring seven phrasings admitted 0 papers.
+  const seven = Array.from({ length: 7 }, (_, i) => `reinforcement learning aspect ${i}`);
+  const topic = {
+    id: 't',
+    name: '强化学习',
+    zh: '',
+    en: seven.join('; '),
+    terms: topicTerms({ zh: '', en: seven.join('; ') }),
+    concepts: splitConcepts(seven.join('; ')),
+  };
+  assert.equal(topic.concepts.length, 1, 'seven phrasings are ONE requirement');
+  const hit = { title: 'A survey of reinforcement learning aspect 3 methods', abstract: '', keywords: [] };
+  assert.ok(matchesTopic(hit, topic), 'matching one phrasing is enough');
 });
