@@ -65,7 +65,21 @@
 
 ## 安装
 
-插件按本机既有约定以 `link:` 方式装入 web profile：
+### 1. 取得源码并构建
+
+```sh
+git clone https://github.com/juzikexue/dsh-paper-digest.git
+cd dsh-paper-digest
+pnpm install
+pnpm build:client   # 必须执行，原因见下
+pnpm test           # 可选：69 项回归单测
+```
+
+> **`lib/client.js` 不入库**（esbuild 构建产物，见 `.gitignore`），所以克隆后必须自己构建一次。
+> 跳过这一步插件**仍能启动、日报也照常生成**，但**设置页会是空的**——浏览器半加载不到，且没有任何报错。
+> 这是装这个插件最容易漏掉的一步。
+
+### 2. 以 `link:` 方式装入 web profile
 
 ```jsonc
 // ~/.dsh/profiles/web/package.json
@@ -76,7 +90,8 @@
     }
   },
   "dependencies": {
-    "@dsh-local/dsh-paper-digest": "link:F:/project/d1/plugins/dsh-paper-digest"
+    // 换成上一步克隆到的绝对路径
+    "@dsh-local/dsh-paper-digest": "link:/abs/path/to/dsh-paper-digest"
   }
 }
 ```
