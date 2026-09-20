@@ -153,6 +153,20 @@ export function createConfigStore() {
       .catch((error) => ({ ok: false, error: String((error && error.message) || error) }));
   }
 
+  /**
+   * Propose keyword groups for a topic name. Independent of any digest run, so it
+   * works on a topic the user just typed and has never searched.
+   */
+  function generateKeywords(topicId, name) {
+    return fetch(`${BASE}/suggest`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ topicId, keywordsFor: name }),
+    })
+      .then((r) => r.json().then((data) => ({ status: r.status, data })))
+      .catch((error) => ({ status: 0, data: { ok: false, error: String((error && error.message) || error) } }));
+  }
+
   return {
     get,
     getStatus,
@@ -167,5 +181,6 @@ export function createConfigStore() {
     loadSuggestions,
     analyseSuggestions,
     dismissSuggestion,
+    generateKeywords,
   };
 }

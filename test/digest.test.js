@@ -71,6 +71,26 @@ test('sanitise repairs a partial or hostile config', () => {
   assert.equal(cfg.sources.crossref, true);
 });
 
+test('deleting every topic sticks — an empty array is not missing data', () => {
+  // Regression, reported from the settings panel: deleting the shipped starter
+  // topic brought it straight back, because an empty array fell back to the
+  // starters meant for a config that has no `topics` field at all. Deleting was
+  // therefore impossible, and the same fallback rewrote a cleared topic name to
+  // the first Chinese keyword.
+  const emptied = sanitise({ topics: [] });
+  assert.deepEqual(emptied.topics, [], 'an explicitly empty list stays empty');
+
+  // A missing field still gets the starters, so a fresh install is usable.
+  assert.ok(sanitise({}).topics.length >= 3);
+
+  // A topic whose name the user cleared keeps the empty name rather than
+  // inventing one from its keywords.
+  const renamed = sanitise({ topics: [{ id: 't1', name: '', zh: '学习分析', en: 'learning analytics' }] });
+  assert.equal(renamed.topics.length, 1);
+  assert.equal(renamed.topics[0].name, '', 'the label is the user’s, not derived');
+  assert.equal(renamed.topics[0].zh, '学习分析');
+});
+
 test('default config is self-consistent', () => {
   const cfg = defaultConfig();
   assert.equal(cfg.mix.zh + cfg.mix.en, cfg.dailyCount);

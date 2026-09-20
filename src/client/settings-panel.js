@@ -180,6 +180,11 @@ export function PaperDigestPanel(props) {
   const [analysing, setAnalysing] = React.useState(false);
   const [suggestMsg, setSuggestMsg] = React.useState('');
   const [manualKw, setManualKw] = React.useState({});
+  // Keyword groups proposed from a topic name, keyed by topic index, plus the
+  // per-topic "generating" flag so one topic's spinner is not another's.
+  const [kwProposals, setKwProposals] = React.useState({});
+  const [generating, setGenerating] = React.useState({});
+  const [genMsg, setGenMsg] = React.useState({});
 
   React.useEffect(() => {
     return store.subscribe(() => {
@@ -414,6 +419,62 @@ export function PaperDigestPanel(props) {
           : `分析完成：${n} 条建议，来自 ${data.nearMissCount ?? 0} 条接近判据的论文`,
       );
     });
+  }
+
+  /**
+   * Ask the model for keyword groups matching this topic's name.
+   *
+   * Unlike the gap analysis this needs no prior run — it works on a name the user
+   * just typed. Each proposal is returned with a coverage count from OpenAlex, so
+   * a phrase the model invented can be told apart from one that actually
+   * retrieves papers before it is accepted.
+   */
+  function generateForTopic(topic, index) {
+    const name = String(topic.name ?? '').trim();
+    if (!name) {
+      setGenMsg((prev) => ({ ...prev, [index]: '请先填写主题名' }));
+      return;
+    }
+    setGenerating((prev) => ({ ...prev, [index]: true }));
+    setGenMsg((prev) => ({ ...prev, [index]: '正在生成关键词…' }));
+    store.generateKeywords(topic.id, name).then((res) => {
+      setGenerating((prev) => ({ ...prev, [index]: false }));
+      const data = res?.data ?? {};
+      if (!data.ok) {
+        setGenMsg((prev) => ({ ...prev, [index]: data.error || '生成失败' }));
+        return;
+      }
+      const groups = data.groups ?? [];
+      setKwProposals((prev) => ({ ...prev, [index]: groups }));
+      setGenMsg((prev) => ({
+        ...prev,
+        [index]: groups.length
+          ? `${groups.length} 组建议，点击采纳（会同时写入中英文关键词）`
+          : '模型没有给出符合要求的词组，可换个更具体的主题名再试',
+      }));
+    });
+  }
+
+  /** Adopt one proposed group: write both halves into the topic's keywords. */
+  function adoptKeywordGroup(index, group) {
+    const topic = cfg.topics[index];
+    if (!topic) return;
+    const zhEntries = kwEntries(topic.zh);
+    const enEntries = kwEntries(topic.en);
+    for (const part of String(group.zh).split(/[;；]+/).map((s) => s.trim()).filter(Boolean)) {
+      if (!zhEntries.includes(part)) zhEntries.push(part);
+    }
+    for (const part of String(group.en).split(/[;；]+/).map((s) => s.trim()).filter(Boolean)) {
+      if (!enEntries.includes(part)) enEntries.push(part);
+    }
+    const topics = cfg.topics.map((t, i) =>
+      i === index ? { ...t, zh: zhEntries.join('; '), en: enEntries.join('; ') } : t,
+    );
+    patch({ topics });
+    setKwProposals((prev) => ({
+      ...prev,
+      [index]: (prev[index] ?? []).filter((g) => g.zh !== group.zh || g.en !== group.en),
+    }));
   }
 
   /** Applied keywords as removable chips, plus a free-form add box. */
@@ -711,12 +772,75 @@ export function PaperDigestPanel(props) {
                 'button',
                 {
                   type: 'button',
+                  className: 'dshpd-btn dshpd-btn-sm',
+                  disabled: !!generating[index],
+                  title: '按主题名生成中英对照的关键词组，可逐条采纳',
+                  onClick: () => generateForTopic(topic, index),
+                },
+                generating[index] ? '生成中…' : 'AI 生成关键词',
+              ),
+              React.createElement(
+                'button',
+                {
+                  type: 'button',
                   className: 'dshpd-btn dshpd-btn-ghost dshpd-btn-sm',
                   onClick: () => removeTopic(index),
                 },
                 '删除',
               ),
             ),
+            genMsg[index]
+              ? React.createElement('div', { className: 'dshpd-status' }, genMsg[index])
+              : null,
+            (kwProposals[index] ?? []).length
+              ? React.createElement(
+                  'div',
+                  { className: 'dshpd-chips' },
+                  (kwProposals[index] ?? []).map((group) =>
+                    React.createElement(
+                      'span',
+                      {
+                        className: 'dshpd-chip dshpd-chip-suggest',
+                        key: `${group.zh}|${group.en}`,
+                        title: `${group.zh}\n${group.en}\n${group.verdict || ''}`,
+                        role: 'button',
+                        tabIndex: 0,
+                        'aria-pressed': false,
+                        onClick: () => adoptKeywordGroup(index, group),
+                        onKeyDown: (e) => {
+                          if (e.key === 'Enter' || e.key === ' ') {
+                            e.preventDefault();
+                            adoptKeywordGroup(index, group);
+                          }
+                        },
+                      },
+                      group.zh,
+                      React.createElement(
+                        'span',
+                        { className: 'dshpd-chip-count' },
+                        group.coverage === 0 ? ' 检索不到' : ` +${group.coverage ?? '?'}`,
+                      ),
+                      React.createElement(
+                        'button',
+                        {
+                          type: 'button',
+                          className: 'dshpd-chip-x',
+                          title: '不采纳这组',
+                          'aria-label': `不采纳 ${group.zh}`,
+                          onClick: (e) => {
+                            e.stopPropagation();
+                            setKwProposals((prev) => ({
+                              ...prev,
+                              [index]: (prev[index] ?? []).filter((g) => g !== group),
+                            }));
+                          },
+                        },
+                        '×',
+                      ),
+                    ),
+                  ),
+                )
+              : null,
             keywordEditor(topic, index, 'zh', '中文关键词', '例：人工智能 教育; 大模型 教学'),
             keywordEditor(
               topic,

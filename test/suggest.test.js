@@ -15,6 +15,10 @@ import {
   parseSuggestions,
   mergeSuggestions,
   MAX_SUGGESTIONS,
+  buildKeywordPrompt,
+  parseKeywordGroups,
+  coverageVerdict,
+  MAX_KEYWORD_GROUPS,
 } from '../lib/core/suggest.js';
 
 const topic = { id: 't1', name: '人工智能教育', zh: '人工智能 教育', en: 'artificial intelligence education' };
@@ -178,4 +182,65 @@ test('mergeSuggestions drops dismissed phrases and keeps the list', () => {
   assert.equal(merged.suggestions[0].phrase, 'intelligent tutoring');
   assert.deepEqual(merged.dismissed, ['ai literacy']);
   assert.ok(merged.generatedAt, 'stamps a generation time');
+});
+
+/* ── keywords generated from a topic name ─────────────────────────────────── */
+
+test('a generated group must be specific in both languages', () => {
+  // The failure mode is a group that looks fine in one language and is a bare
+  // generic word in the other, which is exactly what floods a digest.
+  const reply = JSON.stringify({
+    groups: [
+      { zh: '人工智能 教育', en: 'artificial intelligence education' }, // keep
+      { zh: '教育', en: 'artificial intelligence education' }, // zh too generic
+      { zh: '人工智能 教育', en: 'education' }, // en too generic
+      { zh: '学习分析', en: 'learning analytics' }, // keep
+    ],
+  });
+  const out = parseKeywordGroups(reply);
+  assert.equal(out.length, 2);
+  assert.equal(out[0].zh, '人工智能 教育');
+  assert.equal(out[1].en, 'learning analytics');
+});
+
+test('a group missing one half is dropped, never half-applied', () => {
+  const reply = JSON.stringify({
+    groups: [
+      { zh: '人工智能 教育', en: '' },
+      { zh: '', en: 'artificial intelligence education' },
+      { zh: '学习分析', en: 'learning analytics' },
+    ],
+  });
+  const out = parseKeywordGroups(reply);
+  assert.equal(out.length, 1, 'a half-filled group is not a keyword');
+  assert.equal(out[0].zh, '学习分析');
+});
+
+test('duplicate groups collapse and the list is capped', () => {
+  const many = Array.from({ length: 20 }, () => ({ zh: '学习分析 方法', en: 'learning analytics methods' }));
+  const out = parseKeywordGroups(JSON.stringify({ groups: [...many, { zh: '学习分析', en: 'learning analytics' }] }));
+  assert.equal(out.length, 2, 'identical pairs collapse');
+  assert.ok(out.length <= MAX_KEYWORD_GROUPS);
+});
+
+test('a malformed keyword reply yields nothing instead of throwing', () => {
+  for (const bad of ['', 'nope', '{"groups": 3}', '{"other":[]}', '```json\nnot json\n```']) {
+    assert.deepEqual(parseKeywordGroups(bad), []);
+  }
+});
+
+test('the keyword prompt demands specificity and a translation pair', () => {
+  const prompt = buildKeywordPrompt({ name: '教育数据挖掘' });
+  assert.ok(prompt.includes('教育数据挖掘'), 'carries the topic name');
+  assert.ok(prompt.includes('至少 4 个字'), 'states the Chinese floor');
+  assert.ok(prompt.includes('至少两个词'), 'states the English floor');
+  assert.ok(prompt.includes('同一检索意图'), 'demands a translation pair, not two lists');
+});
+
+test('coverage verdicts distinguish "no results" from "could not check"', () => {
+  assert.equal(coverageVerdict(0), '检索不到结果');
+  assert.equal(coverageVerdict(null), '未能核验');
+  assert.equal(coverageVerdict(undefined), '未能核验');
+  assert.match(coverageVerdict(12610), /12610/);
+  assert.match(coverageVerdict(9_000_000), /过宽/);
 });
