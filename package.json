@@ -1,0 +1,72 @@
+{
+  "name": "@dsh-local/dsh-paper-digest",
+  "description": "Paper digest plugin: every day at a configured time, collect quality papers on your topics (Chinese + English), rank them with transparent quality signals, and write a Markdown report into the workspace. Configured from its own page in DSH Settings.",
+  "version": "0.1.0",
+  "type": "module",
+  "main": "lib/index.js",
+  "exports": {
+    ".": {
+      "default": "./lib/index.js"
+    },
+    "./client": {
+      "default": "./lib/client.js"
+    },
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "lib/index.js",
+    "lib/client.js",
+    "lib/core/",
+    "cordis.patch.yml",
+    "README.md"
+  ],
+  "license": "MIT",
+  "keywords": [
+    "dsh",
+    "dsh-plugin",
+    "deepseek",
+    "deepseek-harness",
+    "paper",
+    "literature",
+    "digest",
+    "arxiv",
+    "openalex",
+    "cnki"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/juzikexue/dsh-paper-digest.git"
+  },
+  "bugs": {
+    "url": "https://github.com/juzikexue/dsh-paper-digest/issues"
+  },
+  "homepage": "https://github.com/juzikexue/dsh-paper-digest#readme",
+  "scripts": {
+    "build:client": "node scripts/build-client.mjs",
+    "watch:client": "node scripts/build-client.mjs --watch",
+    "test": "node --test \"test/*.test.js\""
+  },
+  "devDependencies": {
+    "esbuild": "^0.28.2"
+  },
+  "pnpm": {
+    "onlyBuiltDependencies": [
+      "esbuild"
+    ]
+  },
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
+    "client": {
+      "inject": [
+        "@deepseek-ai/dsh-client-connection",
+        "@deepseek-ai/dsh-client-runtime",
+        "@deepseek-ai/dsh-client-ui-settings",
+        "@deepseek-ai/dsh-client-ui-slots",
+        "@deepseek-ai/dsh-api-remotes"
+      ],
+      "platform": "web"
+    }
+  }
+}
